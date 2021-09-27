@@ -5,6 +5,7 @@ class WAV_Class
 private:
     #define   Size_Header_WAV    44
     #define   Size_Buffer_WAV    2048
+    #define   Frequency_Timer    50000
 public:
   struct WAV_Header
   {
@@ -26,12 +27,14 @@ public:
     uint32_t          Subchunk2Size;        // == NumSamples * NumChannels * BitsPerSample/8. This is the number of bytes in the data. You can also think of this as the size of the read of the subchunk following this number.
   };
 
+  volatile uint8_t DacPin;
   uint8_t Buffer_Main[Size_Buffer_WAV];  
   float IncreaseBy=0;                          // The amount to increase the counter by per call to "onTimer"
   float Count=0;                               // The counter counting up, we check this to see if we need to send
   uint16_t LastIntCount=0;                     // The last integer part of count
   uint32_t Count_Byte=0;
   uint32_t Count_Frame=0;
+  uint16_t Pointer_Update=0;
   bool Completed=true;
   bool HalfTransfer=false;
 
@@ -43,16 +46,8 @@ public:
   uint32_t WAV_getSizeData(void);
   uint16_t WAV_getPointerUpdate();
   void WAV_setPointerUpdate(uint16_t _value);
-};
-
-class DAC_Audio_Class
-{
-private:
-  #define   Frequency_Timer    50000
-public:
-  volatile uint8_t DacPin;
-  WAV_Class *CurrentWav=0;
-  DAC_Audio_Class(uint8_t DacPin, uint8_t TimerIndex);
+  void DAC_Audio_Init(uint8_t DacPin, uint8_t TimerIndex,WAV_Class *_class);
   void DAC_playWav(WAV_Class *Wav);
 };
+
 

@@ -4,7 +4,75 @@
  * Class WAV 
  * */
 WAV_Class::WAV_Header Header;
+WAV_Class *DacAudioClassGlobalObject;
+uint32_t cp0_regs[18];  
+int __test=0;
+// interrupt stuff
+hw_timer_t * timer = NULL;
+portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
+/* xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx */
+// The main interrupt routine called 50,000 times per second
+void IRAM_ATTR onTimer() 
+{  
+  uint32_t IntPartOfCount;
 
+ // get FPU state, we need to do this until the issue of using floats inside an interupt is fixed
+  uint32_t cp_state = xthal_get_cpenable();
+  
+  if(cp_state) 
+  {
+    // Save FPU registers
+    xthal_save_cp0(cp0_regs);
+  } 
+  else 
+  {
+    // enable FPU
+    xthal_set_cpenable(1);
+  }
+  if(DacAudioClassGlobalObject!=NULL)
+  {
+    if(DacAudioClassGlobalObject->Completed==false)
+    {
+      //DacAudioClassGlobalObject->Count+=DacAudioClassGlobalObject->IncreaseBy;
+      //IntPartOfCount=floor(DacAudioClassGlobalObject->Count);
+      //if(IntPartOfCount>DacAudioClassGlobalObject->LastIntCount)
+      {
+        //DacAudioClassGlobalObject->LastIntCount=IntPartOfCount;
+        dacWrite(DacAudioClassGlobalObject->DacPin,DacAudioClassGlobalObject->Buffer_Main[DacAudioClassGlobalObject->Count_Byte]);
+        if(DacAudioClassGlobalObject->Count_Byte++>=Size_Buffer_WAV)
+        {
+          DacAudioClassGlobalObject->HalfTransfer=true;
+          DacAudioClassGlobalObject->Pointer_Update = 1024;
+          DacAudioClassGlobalObject->Count_Byte=0;
+          DacAudioClassGlobalObject->Count_Frame+=Size_Buffer_WAV;
+          if(DacAudioClassGlobalObject->Count_Frame>=Header.Subchunk2Size)
+          {
+            DacAudioClassGlobalObject->Completed = true;
+            Serial.println("Finish");
+            Serial.println(DacAudioClassGlobalObject->Count_Frame);
+          }
+        }
+        if(DacAudioClassGlobalObject->Count_Byte==1024)
+        {
+          DacAudioClassGlobalObject->HalfTransfer=true;
+          DacAudioClassGlobalObject->Pointer_Update = 0;
+        }
+      }
+    } 
+  }
+  // return fpu to previous state
+   if(cp_state) 
+   {
+    // Restore FPU registers
+    xthal_restore_cp0(cp0_regs);
+  } 
+  else 
+  {
+    // turn it back off
+    xthal_set_cpenable(0);
+  }
+}
+/*xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx*/
 bool  WAV_Class::WAV_Init(uint8_t *buffer_header,uint16_t _size)
 {
   WAV_Header Header_old = Header;
@@ -35,6 +103,7 @@ bool  WAV_Class::WAV_Init(uint8_t *buffer_header,uint16_t _size)
       Count_Frame=0;
       Completed = true;
       HalfTransfer = false;
+      Pointer_Update = 0;
       return true;
     }
   }
@@ -75,115 +144,21 @@ uint32_t WAV_Class::WAV_getSizeData(void)
 {
   return Header.Subchunk2Size;
 }
-/* xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx */
-/* 
- * DAC AUDIO CLASS
- * */
-uint32_t cp0_regs[18];
 
-// because of the difficulty in passing parameters to interrupt handlers we have a global
-// object of this type that points to the object the user creates.
-DAC_Audio_Class *DacAudioClassGlobalObject;       
-
-// interrupt stuff
-hw_timer_t * timer = NULL;
-portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
-
-// The main interrupt routine called 50,000 times per second
-void IRAM_ATTR onTimer() 
-{  
-  uint16_t IntPartOfCount;
-
- // get FPU state, we need to do this until the issue of using floats inside an interupt is fixed
-  uint32_t cp_state = xthal_get_cpenable();
-  
-  if(cp_state) 
-  {
-    // Save FPU registers
-    xthal_save_cp0(cp0_regs);
-  } 
-  else 
-  {
-    // enable FPU
-    xthal_set_cpenable(1);
-  }
-  
-  /*if(XTDacAudioClassGlobalObject->CurrentWav!=0)
-  {
-    if(XTDacAudioClassGlobalObject->CurrentWav->Completed==false)
-    {      
-	  // increase the counter, if it goes to a new integer digit then write to DAC
-      XTDacAudioClassGlobalObject->CurrentWav->Count+=XTDacAudioClassGlobalObject->CurrentWav->IncreaseBy;                                 
-      IntPartOfCount=floor(XTDacAudioClassGlobalObject->CurrentWav->Count);
-      if(IntPartOfCount>XTDacAudioClassGlobalObject->CurrentWav->LastIntCount)
-      {
-        // gone to a new integer of count, we need to send a new value to the DAC
-        XTDacAudioClassGlobalObject->CurrentWav->LastIntCount=IntPartOfCount;           // update the last int count to this new one
-        dacWrite(XTDacAudioClassGlobalObject->DacPin,XTDacAudioClassGlobalObject->CurrentWav->Data[XTDacAudioClassGlobalObject->CurrentWav->DataIdx]);             												// write out the data
-        XTDacAudioClassGlobalObject->CurrentWav->DataIdx++;
-        if(XTDacAudioClassGlobalObject->CurrentWav->DataIdx>=XTDacAudioClassGlobalObject->CurrentWav->DataSize)  // end of data, flag end
-          XTDacAudioClassGlobalObject->CurrentWav->Completed=true;  
-      }  
-    }
-  }*/
-  if(DacAudioClassGlobalObject->CurrentWav!=0)
-  {
-    if(DacAudioClassGlobalObject->CurrentWav->Completed==false)
-    {
-      DacAudioClassGlobalObject->CurrentWav->Count+=DacAudioClassGlobalObject->CurrentWav->IncreaseBy;
-      IntPartOfCount=floor(DacAudioClassGlobalObject->CurrentWav->Count);
-      if(IntPartOfCount>DacAudioClassGlobalObject->CurrentWav->LastIntCount)
-      {
-        DacAudioClassGlobalObject->CurrentWav->LastIntCount=IntPartOfCount;
-        dacWrite(DacAudioClassGlobalObject->DacPin,DacAudioClassGlobalObject->CurrentWav->Buffer_Main[DacAudioClassGlobalObject->CurrentWav->Count_Byte]);
-        if(DacAudioClassGlobalObject->CurrentWav->Count_Byte++>=Size_Buffer_WAV)
-        {
-          DacAudioClassGlobalObject->CurrentWav->HalfTransfer=true;
-
-          DacAudioClassGlobalObject->CurrentWav->Count_Byte=0;
-          DacAudioClassGlobalObject->CurrentWav->Count_Frame+=Size_Buffer_WAV;
-          if(DacAudioClassGlobalObject->CurrentWav->Count_Frame>=Header.Subchunk2Size)
-          {
-            DacAudioClassGlobalObject->CurrentWav->Completed = true;
-            Serial.println("Finish");
-            Serial.println(DacAudioClassGlobalObject->CurrentWav->Count_Frame);
-          }
-        }
-        if(DacAudioClassGlobalObject->CurrentWav->Count_Byte==1024)
-        {
-          DacAudioClassGlobalObject->CurrentWav->HalfTransfer=true;
-        }
-      }
-    } 
-  }
-  // return fpu to previous state
-   if(cp_state) 
-   {
-    // Restore FPU registers
-    xthal_restore_cp0(cp0_regs);
-  } 
-  else 
-  {
-    // turn it back off
-    xthal_set_cpenable(0);
-  }
-}
-
-DAC_Audio_Class::DAC_Audio_Class(uint8_t DacPin, uint8_t TimerIndex)
+void WAV_Class::DAC_Audio_Init(uint8_t DacPin, uint8_t TimerIndex,WAV_Class *_class)
 {
   // Using a prescaler of 80 gives a counting frequency of 1,000,000 (1MHz) and using
   // and calling the function every 20 counts of the freqency (the 20 below) means
   // that we will call our onTimer function 50,000 times a second
   timer = timerBegin(TimerIndex, 80, true);             // use timer 0, prescaler is 80 (divide by 8000), count up
   timerAttachInterrupt(timer, &onTimer, true);          // P3= edge trggered
-  timerAlarmWrite(timer, 20, true);                    // will trigger 8000 times per second, so 8kHz is max freq.
+  timerAlarmWrite(timer, 62, true);                    // will trigger 8000 times per second, so 8kHz is max freq.
   timerAlarmEnable(timer);                              // enable
-  DacAudioClassGlobalObject=this;						            // set variable to use in ISR
-  this->DacPin=DacPin;
+  _class->DacPin= DacPin;
   dacWrite(DacPin,0x7f);							                	// Set speaker to mid point to stop any clicks during sample playback
 }
 
- void DAC_Audio_Class::DAC_playWav(WAV_Class *Wav)
+ void WAV_Class::DAC_playWav(WAV_Class *Wav)
  {
    Wav->Count=0;
    Wav->LastIntCount = 0;
@@ -191,5 +166,7 @@ DAC_Audio_Class::DAC_Audio_Class(uint8_t DacPin, uint8_t TimerIndex)
    Wav->Completed = false;
    Wav->Count_Byte = 0;
    Wav->Count_Frame = 0;
-   CurrentWav = Wav;
+   Wav->Pointer_Update = 0;
+   DacAudioClassGlobalObject = Wav;
  }
+
