@@ -5,7 +5,7 @@ class WAV_Class
 private:
     #define   Size_Header_WAV    44
     #define   Size_Buffer_WAV    2048
-    #define   Frequency_Timer    50000
+    #define   Frequency_Timer    1000000
 public:
   struct WAV_Header
   {
@@ -28,17 +28,21 @@ public:
   };
 
   volatile uint8_t DacPin;
-  uint8_t Buffer_Main[Size_Buffer_WAV];  
-  float IncreaseBy=0;                          // The amount to increase the counter by per call to "onTimer"
+  uint8_t Buffer_Main[Size_Buffer_WAV];        // 
+  uint32_t Freq_Timer=0;                       // The amount to increase the counter by per call to "onTimer"
   float Count=0;                               // The counter counting up, we check this to see if we need to send
   uint16_t LastIntCount=0;                     // The last integer part of count
   uint32_t Count_Byte=0;
   uint32_t Count_Frame=0;
   uint16_t Pointer_Update=0;
-  bool Completed=true;
-  bool HalfTransfer=false;
 
-  bool  WAV_Init(uint8_t *buffer_header,uint16_t _size);
+  bool WAV_Playing=false;
+  bool HalfTransfer=false;
+  bool Play_Finish=false;
+  bool Play_Repeat=false;
+  /******************** Funtion ****************************/
+  bool  WAV_Init(void);
+  bool  WAV_UpdateHeader(uint8_t *buffer_header,uint16_t _size);
   uint8_t WAV_getSizeHeader(void);
   void WAV_UpdateBuffer(uint8_t* _buffer,uint16_t _start,uint16_t _leng);
   bool WAV_GetflagUpdate();
@@ -47,7 +51,7 @@ public:
   uint16_t WAV_getPointerUpdate();
   void WAV_setPointerUpdate(uint16_t _value);
   void DAC_Audio_Init(uint8_t DacPin, uint8_t TimerIndex,WAV_Class *_class);
-  void DAC_playWav(WAV_Class *Wav);
+  void DAC_playWav(WAV_Class *Wav,bool _repeat = false);
 };
 
 

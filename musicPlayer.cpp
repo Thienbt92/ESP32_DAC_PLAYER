@@ -1,12 +1,14 @@
 #include "esp32-hal-timer.h"
 #include "musicPlayer.h"
+#include "soc/sens_reg.h"
+
 /**
  * Class WAV 
  * */
 WAV_Class::WAV_Header Header;
 WAV_Class *DacAudioClassGlobalObject;
 uint32_t cp0_regs[18];  
-int __test=0;
+volatile uint8_t LastDacValue = 0x7f;
 // interrupt stuff
 hw_timer_t * timer = NULL;
 portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
@@ -14,8 +16,6 @@ portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
 // The main interrupt routine called 50,000 times per second
 void IRAM_ATTR onTimer() 
 {  
-  uint32_t IntPartOfCount;
-
  // get FPU state, we need to do this until the issue of using floats inside an interupt is fixed
   uint32_t cp_state = xthal_get_cpenable();
   
@@ -29,36 +29,44 @@ void IRAM_ATTR onTimer()
     // enable FPU
     xthal_set_cpenable(1);
   }
-  if(DacAudioClassGlobalObject!=NULL)
+  if(DacAudioClassGlobalObject!=NULL)     // Chỉ chạy nếu con trỏ không rỗng
   {
-    if(DacAudioClassGlobalObject->Completed==false)
+    if(Header.Chunk_ID==0x52494646)
     {
-      //DacAudioClassGlobalObject->Count+=DacAudioClassGlobalObject->IncreaseBy;
-      //IntPartOfCount=floor(DacAudioClassGlobalObject->Count);
-      //if(IntPartOfCount>DacAudioClassGlobalObject->LastIntCount)
+      if(DacAudioClassGlobalObject->WAV_Playing==true)  // Đẩy dữ liệu ra DAC khi cờ báo
       {
-        //DacAudioClassGlobalObject->LastIntCount=IntPartOfCount;
-        dacWrite(DacAudioClassGlobalObject->DacPin,DacAudioClassGlobalObject->Buffer_Main[DacAudioClassGlobalObject->Count_Byte]);
-        if(DacAudioClassGlobalObject->Count_Byte++>=Size_Buffer_WAV)
-        {
-          DacAudioClassGlobalObject->HalfTransfer=true;
-          DacAudioClassGlobalObject->Pointer_Update = 1024;
-          DacAudioClassGlobalObject->Count_Byte=0;
-          DacAudioClassGlobalObject->Count_Frame+=Size_Buffer_WAV;
-          if(DacAudioClassGlobalObject->Count_Frame>=Header.Subchunk2Size)
-          {
-            DacAudioClassGlobalObject->Completed = true;
-            Serial.println("Finish");
-            Serial.println(DacAudioClassGlobalObject->Count_Frame);
+          LastDacValue = DacAudioClassGlobalObject->Buffer_Main[DacAudioClassGlobalObject->Count_Byte];
+          CLEAR_PERI_REG_MASK(SENS_SAR_DAC_CTRL1_REG, SENS_SW_TONE_EN);  //Disable Tone
+          if(DacAudioClassGlobalObject->DacPin==25) {
+              CLEAR_PERI_REG_MASK(SENS_SAR_DAC_CTRL2_REG, SENS_DAC_CW_EN1_M);
+              SET_PERI_REG_BITS(RTC_IO_PAD_DAC1_REG, RTC_IO_PDAC1_DAC, LastDacValue, RTC_IO_PDAC1_DAC_S);
+              SET_PERI_REG_MASK(RTC_IO_PAD_DAC1_REG, RTC_IO_PDAC1_XPD_DAC | RTC_IO_PDAC1_DAC_XPD_FORCE);
           }
-        }
-        if(DacAudioClassGlobalObject->Count_Byte==1024)
-        {
-          DacAudioClassGlobalObject->HalfTransfer=true;
-          DacAudioClassGlobalObject->Pointer_Update = 0;
-        }
-      }
-    } 
+          else if(DacAudioClassGlobalObject->DacPin==26) {
+              CLEAR_PERI_REG_MASK(SENS_SAR_DAC_CTRL2_REG, SENS_DAC_CW_EN2_M);
+              SET_PERI_REG_BITS(RTC_IO_PAD_DAC2_REG, RTC_IO_PDAC2_DAC, LastDacValue, RTC_IO_PDAC2_DAC_S);
+              SET_PERI_REG_MASK(RTC_IO_PAD_DAC2_REG, RTC_IO_PDAC2_XPD_DAC | RTC_IO_PDAC2_DAC_XPD_FORCE);
+          }
+          if(++DacAudioClassGlobalObject->Count_Byte>=Size_Buffer_WAV)
+          {
+            DacAudioClassGlobalObject->HalfTransfer=true;
+            DacAudioClassGlobalObject->Pointer_Update = 1024;
+            DacAudioClassGlobalObject->Count_Byte=0;
+            DacAudioClassGlobalObject->Count_Frame+=Size_Buffer_WAV;
+            if(DacAudioClassGlobalObject->Count_Frame>=Header.Subchunk2Size)
+            {
+              Serial.println("Finish");
+              DacAudioClassGlobalObject->WAV_Playing = false;
+              DacAudioClassGlobalObject->Play_Finish=true;
+            }
+          }
+          if(DacAudioClassGlobalObject->Count_Byte==1024)
+          {
+            DacAudioClassGlobalObject->HalfTransfer=true;
+            DacAudioClassGlobalObject->Pointer_Update = 0;
+          }
+      } 
+    }
   }
   // return fpu to previous state
    if(cp_state) 
@@ -73,7 +81,38 @@ void IRAM_ATTR onTimer()
   }
 }
 /*xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx*/
-bool  WAV_Class::WAV_Init(uint8_t *buffer_header,uint16_t _size)
+bool  WAV_Class::WAV_Init(void)
+{
+  //WAV_Header Header_old = Header;
+  // The canonical WAVE format starts with the RIFF header:
+  Header.Chunk_ID       = 0;
+  Header.chunkSize      = 0;
+  Header.Format         = 0;
+  // The "fmt " subchunk describes the sound data's format:
+  Header.Subchunk1ID    = 0;
+  Header.Subchunk1Size  = 0;
+  Header.AudioFormat    = 0;
+  Header.NumChannels    = 0;
+  Header.SampleRate     = 0;
+  Header.ByteRate       = 0;
+  Header.BlockAlign     = 0;
+  Header.BitsPerSample  = 0;
+  // The "data" subchunk contains the size of the data and the actual sound:
+  Header.Subchunk2ID    = 0;
+  Header.Subchunk2Size  = 0;
+
+  Freq_Timer = 62;//(uint32_t)((float)Frequency_Timer /(Header.SampleRate*2));
+  Count = 0;
+  LastIntCount = 0;
+  Count_Byte=0;
+  Count_Frame=0;
+  WAV_Playing = false;
+  HalfTransfer = false;
+  Pointer_Update = 0;
+  Play_Finish=false;
+  return true;
+}
+bool  WAV_Class::WAV_UpdateHeader(uint8_t *buffer_header,uint16_t _size)
 {
   WAV_Header Header_old = Header;
   // The canonical WAVE format starts with the RIFF header:
@@ -96,14 +135,15 @@ bool  WAV_Class::WAV_Init(uint8_t *buffer_header,uint16_t _size)
   {
     if(Header.Subchunk2Size<=Header.chunkSize)
     {
-      IncreaseBy =((float)Header.SampleRate / Frequency_Timer)*2;
+      //Freq_Timer =(uint32_t)((float)Frequency_Timer /(Header.SampleRate*2));
       Count = 0;
       LastIntCount = 0;
       Count_Byte=0;
       Count_Frame=0;
-      Completed = true;
+      WAV_Playing = false;
       HalfTransfer = false;
       Pointer_Update = 0;
+      Play_Finish=false;
       return true;
     }
   }
@@ -112,7 +152,7 @@ bool  WAV_Class::WAV_Init(uint8_t *buffer_header,uint16_t _size)
     Header = Header_old;
     return false;
   }
-  return false;
+  return false;  
 }
 /**
  * Hàm trả về kích thước số byte Header của file Wav
@@ -152,21 +192,23 @@ void WAV_Class::DAC_Audio_Init(uint8_t DacPin, uint8_t TimerIndex,WAV_Class *_cl
   // that we will call our onTimer function 50,000 times a second
   timer = timerBegin(TimerIndex, 80, true);             // use timer 0, prescaler is 80 (divide by 8000), count up
   timerAttachInterrupt(timer, &onTimer, true);          // P3= edge trggered
-  timerAlarmWrite(timer, 62, true);                    // will trigger 8000 times per second, so 8kHz is max freq.
+  timerAlarmWrite(timer, Freq_Timer, true);                    // will trigger 8000 times per second, so 8kHz is max freq.
   timerAlarmEnable(timer);                              // enable
   _class->DacPin= DacPin;
   dacWrite(DacPin,0x7f);							                	// Set speaker to mid point to stop any clicks during sample playback
 }
 
- void WAV_Class::DAC_playWav(WAV_Class *Wav)
+ void WAV_Class::DAC_playWav(WAV_Class *Wav,bool _repeat)
  {
    Wav->Count=0;
    Wav->LastIntCount = 0;
    Wav->HalfTransfer = false;
-   Wav->Completed = false;
+   Wav->WAV_Playing = true;
    Wav->Count_Byte = 0;
    Wav->Count_Frame = 0;
    Wav->Pointer_Update = 0;
+   Wav->Play_Finish=false;
+   Wav->Play_Repeat = _repeat;
    DacAudioClassGlobalObject = Wav;
  }
 
