@@ -49,8 +49,6 @@ void IRAM_ATTR onTimer()
           }
           if(++DacAudioClassGlobalObject->Count_Byte>=Size_Buffer_WAV)
           {
-            DacAudioClassGlobalObject->HalfTransfer=true;
-            DacAudioClassGlobalObject->Pointer_Update = 1024;
             DacAudioClassGlobalObject->Count_Byte=0;
             DacAudioClassGlobalObject->Count_Frame+=Size_Buffer_WAV;
             if(DacAudioClassGlobalObject->Count_Frame>=Header.Subchunk2Size)
@@ -58,6 +56,11 @@ void IRAM_ATTR onTimer()
               Serial.println("Finish");
               DacAudioClassGlobalObject->WAV_Playing = false;
               DacAudioClassGlobalObject->Play_Finish=true;
+            }
+            else
+            {
+              DacAudioClassGlobalObject->HalfTransfer=true;
+              DacAudioClassGlobalObject->Pointer_Update = 1024;
             }
           }
           if(DacAudioClassGlobalObject->Count_Byte==1024)
